@@ -58,34 +58,55 @@ def query_genbank(accessions, email=None, retmax=10, n_entrez=10, gbdb="nuccore"
 
     print("Getting ENTREZ records for GI numbers...")
     for idx, query_chunk in enumerate(queries):
-      gi_numbers = [maps["accession_gi"][acc] for acc in query_chunk]
-      print("\r\tprogress: {}/{} (n={})       ".format(idx+1, len(queries), len(query_chunk)), end="")
+        gi_numbers = [maps["accession_gi"][acc] for acc in query_chunk]
+        print("\r\tprogress: {}/{} (n={})       ".format(idx+1, len(queries), len(query_chunk)), end="")
 
-      try:
-          search_handle = Entrez.epost(db=gbdb, id=",".join(gi_numbers))
-          search_results = Entrez.read(search_handle)
-          webenv, query_key = search_results["WebEnv"], search_results["QueryKey"]
-      except:
-          print("ERROR: Couldn't connect with entrez, please run again")
-          sys.exit(2)
+        # try multiple times to access Entrez
+        success = False
+        num_attempts = 10
+        for attempt_number in range(0, num_attempts):
+            if success:
+                break
+            try:
+                search_handle = Entrez.epost(db=gbdb, id=",".join(gi_numbers))
+                search_results = Entrez.read(search_handle)
+                webenv, query_key = search_results["WebEnv"], search_results["QueryKey"]
+            except:
+                print("Warning: Couldn't connect with entrez for these queries. Retrying...")
+            else:
+                # runs if there are no exceptions in the try block
+                success = True
+        if not success:
+            print("Error: Couldn't connect with entrez after {} attempts".format(num_attempts))
+            sys.exit(2)
+      
 
-      for start in range(0, len(gi_numbers), retmax):
-          #fetch entries in batch
-          try:
-              handle = Entrez.efetch(db=gbdb, rettype="gb", retstart=start, retmax=retmax, webenv=webenv, query_key=query_key)
-          except IOError:
-              print("ERROR: Couldn't connect with entrez, please run again")
-          else:
-              SeqIO_records = SeqIO.parse(handle, "genbank")
-              gi_numbers_pos = start
-              for record in SeqIO_records:
-                  accession_wanted = maps["gi_accession"][gi_numbers[gi_numbers_pos]]
-                  accession_received = re.match(r'^([^.]*)', record.id).group(0).upper()
-                  gi_numbers_pos += 1
-                  if accession_received != accession_wanted:
-                      print("Accession mismatch. Skipping.")
-                  else:
-                      store[accession_wanted] = record
+        for start in range(0, len(gi_numbers), retmax):
+            #fetch entries in batch
+            success = False
+            for attempt_number in range(0, num_attempts):
+                if success:
+                    break
+                try:
+                    handle = Entrez.efetch(db=gbdb, rettype="gb", retstart=start, retmax=retmax, webenv=webenv, query_key=query_key)
+                except IOError:
+                    print("Warning: Couldn't connect with entrez, please run again")
+                else:
+                    success = True
+                    SeqIO_records = SeqIO.parse(handle, "genbank")
+                    gi_numbers_pos = start
+                    for record in SeqIO_records:
+                        accession_wanted = maps["gi_accession"][gi_numbers[gi_numbers_pos]]
+                        accession_received = re.match(r'^([^.]*)', record.id).group(0).upper()
+                        gi_numbers_pos += 1
+                        if accession_received != accession_wanted:
+                            print("Accession mismatch. Skipping.")
+                        else:
+                            store[accession_wanted] = record
+            if not success:
+                print("Error: Couldn't connect with entrez after {} attempts".format(num_attempts))
+                sys.exit(2)
+
     print("")
     return store
 
